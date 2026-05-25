@@ -1,11 +1,26 @@
+import os
+import json
 import requests
 from bs4 import BeautifulSoup
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from datetime import datetime
 
 SHOP_URL = "https://www.etsy.com/shop/PeacemakerRanchCo"
 SHEET_NAME = "Etsy Competitor Tracker"
+
+def get_credentials():
+    creds_json = os.environ["GOOGLE_CREDENTIALS"]
+    creds_dict = json.loads(creds_json)
+
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    return creds
+
 
 def get_listings():
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -13,29 +28,27 @@ def get_listings():
     soup = BeautifulSoup(r.text, "html.parser")
 
     listings = []
+    seen = set()
 
-    for link in soup.select("a[href*='/listing/']"):
-        title = link.get_text(strip=True)
-        url = "https://www.etsy.com" + link["href"]
+    for a in soup.select("a[href*='/listing/']"):
+        url = "https://www.etsy.com" + a["href"]
 
-        if title and url not in [l["url"] for l in listings]:
-            listings.append({
-                "title": title,
-                "url": url,
-                "price": "unknown"
-            })
+        if url in seen:
+            continue
+
+        seen.add(url)
+
+        title = a.get_text(strip=True)
+
+        listings.append({
+            "title": title,
+            "url": url
+        })
 
     return listings
 
 
-def connect_sheet():
-    scope = ["https://spreadsheets.google.com/feeds",
-             "https://www.googleapis.com/auth/drive"]
-
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        "credentials.json", scope
-    )
-
+def connect_sheet(creds):
     client = gspread.authorize(creds)
     sheet = client.open(SHEET_NAME).sheet1
     return sheet
@@ -48,14 +61,14 @@ def save_snapshot(sheet, listings):
         sheet.append_row([
             now,
             item["title"],
-            item["price"],
             item["url"]
         ])
 
 
 def main():
+    creds = get_credentials()
+    sheet = connect_sheet(creds)
     listings = get_listings()
-    sheet = connect_sheet()
     save_snapshot(sheet, listings)
 
 
